@@ -1,0 +1,37 @@
+# DEVELOPMENT compose file
+# Just run `docker compose up --build` to run the app on port 8000
+version: "3.3"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: server.Dockerfile
+    env_file:
+      - "dev.env"
+    environment:
+      MODULE_NAME: server
+      VARIABLE_NAME: app
+    volumes:
+    # So changes made during development are automatically reflected in the container
+    - ".:/app"
+    depends_on:
+      - "db"
+    command: "/start-reload.sh"
+    ports:
+      - "8000:80"
+
+  db:
+    image: postgres:13
+    volumes:
+    - db-data:/var/lib/postgresql/data/
+    env_file:
+      - dev.env
+    ports:
+      - "5432:5432"
+
+
+volumes:
+  db-data:
+
+

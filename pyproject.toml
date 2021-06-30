@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "users2"
+version = "0.1.0"
+description = ""
+authors = ["Snapper <LearningWithSnapper@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+fastapi = "^0.65.2"
+fastapi-users = "^6.1.0"
+fastapi-operation-id = "^0.1.0"
+pydantic = {extras = ["dotenv"], version = "^1.8.2"}
+databases = {extras = ["postgres"], version = "^0.4.3"}
+asyncpg = "^0.23.0"
+psycopg2 = "^2.9.1"
+click = "^8.0.1"
+snowflake = {git = "https://github.com/TuskyOrg/snowflake-python-client.git"}
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
