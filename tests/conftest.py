@@ -29,6 +29,7 @@ def get_user_authentication_headers(client, username: str, password: str):
 ########################################################################################
 # fixtures
 
+
 @pytest.fixture(scope="module")
 def client() -> Generator:
     with TestClient(app) as test_client:
@@ -54,7 +55,9 @@ def normal_user_token_headers(
     """
     password = random_string()
     user_init = UserCreate(
-        username=settings.TEST_USER_USERNAME, email=settings.TEST_USER_EMAIL, password=password
+        username=settings.TEST_USER_USERNAME,
+        email=settings.TEST_USER_EMAIL,
+        password=password,
     )
     user = client.post("/auth/register", user_init)
     return get_user_authentication_headers(
