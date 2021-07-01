@@ -6,7 +6,6 @@ from typing import Generator, Dict
 import pytest
 from fastapi.testclient import TestClient
 from fastapi_users import db as fast_db, models as fast_models
-from pydantic import EmailStr
 from server import app, settings
 
 
