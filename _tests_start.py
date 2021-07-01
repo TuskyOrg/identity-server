@@ -1,14 +1,13 @@
 import logging
-
 # tenacity is a library to retry code until it succeeds
 from tenacity import after_log, before_log, retry, stop_after_attempt, wait_fixed
 
 from server import initdb
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-max_tries = 15
+max_tries = 8
 wait_seconds = 1
 
 
@@ -23,7 +22,7 @@ def wait_for_database_to_be_setup() -> None:
         initdb()
         return
     except Exception as e:
-        logger.error(e)
+        logger.error(e.with_traceback())
         raise e
 
 
