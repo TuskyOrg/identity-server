@@ -4,12 +4,12 @@ import logging
 import os
 import pathlib
 import secrets
-from typing import Optional, Dict, Any, Type, Union, Awaitable
+from typing import Optional, Dict, Any, Type
 import warnings
 import unicodedata
 
 import databases
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, APIRouter, Request
 from fastapi_users import (
     FastAPIUsers,
     # Naming schema: All modules from fastapi_users are labeled as fast_<module_name>.
@@ -77,7 +77,7 @@ handler: logging.Handler
 try:
     handler = logging.FileHandler(settings.LOG_FILE_PATH)  # type: ignore
 except FileNotFoundError:
-    warnings.warn("Log file not found; using NullHandler")
+    warnings.warn("Log file not found; using NullHandler", UserWarning)
     handler = logging.NullHandler()
 handler.setLevel(handler_level)
 
@@ -141,7 +141,7 @@ class CreateUpdateDictModel(BaseModel):
 
 
 class User(CreateUpdateDictModel, fast_models.BaseUser):
-    snowflake: Optional[Snowflake]
+    id: Optional[Snowflake]
     username: Optional[str]
     username_id: Optional[str]
 
@@ -155,9 +155,9 @@ class UserUpdate(User, fast_models.BaseUserUpdate):
 
 
 class UserInDB(User, fast_models.BaseUserDB):
+    id: Snowflake
     username: str
     username_id: str
-    snowflake: Snowflake
 
 
 database = databases.Database(settings.DATABASE_DSN)  # type: ignore
@@ -167,7 +167,7 @@ Base: DeclarativeMeta = declarative_base()
 class UserTable(Base, fast_db.SQLAlchemyBaseUserTable):
     __tablename__ = "users"
 
-    snowflake = Column(BIGINT, nullable=False, unique=True, index=True)
+    id = Column(BIGINT, primary_key=True, index=True, nullable=True, default=None)
     username = Column(TEXT, nullable=False)
     username_id = Column(TEXT, unique=True, nullable=False, index=True)
 
@@ -192,20 +192,17 @@ def initdb():
 
     # If it doesn't, create it
     import asyncio
-    import uuid
 
     loop = asyncio.get_event_loop()
     task = loop.create_task(get_snowflake())
     #
-    id_ = uuid.uuid4()
-    snowflake = loop.run_until_complete(task)
+    id_ = loop.run_until_complete(task)
     username_id = to_id(settings.FIRST_SUPERUSER_USERNAME)
     hashed_password = fast_password.get_password_hash(settings.FIRST_SUPERUSER_PASSWORD)
     user_model = {
         "id": id_,
         "username": settings.FIRST_SUPERUSER_USERNAME,
         "username_id": username_id,
-        "snowflake": snowflake,
         "email": settings.FIRST_SUPERUSER_EMAIL,
         "hashed_password": hashed_password,
         "is_active": True,
@@ -225,17 +222,15 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
     # Add a methods to get users by snowflake and username
 
     async def create(self, user: UserInDB) -> UserInDB:
-        user.snowflake = await get_snowflake()
+        user.id = await get_snowflake()
         return await super(TuskyUserDatabase, self).create(user)
 
+    # This method is unused as of 2021/07/01.
+    # However, the functionality is solid and it complements
+    # fast_db.SQLAlchemyUserDatabase.get_by_email, so this dead code is left alone.
     async def get_by_username(self, username: str):
         username_id = to_id(username)
         query = self.users.select().where(self.users.c.username_id == username_id)
-        user = await self.database.fetch_one(query)
-        return await self._make_user(user) if user else None
-
-    async def get_by_snowflake(self, snowflake: Union[Snowflake, int]):
-        query = self.users.select().where(self.users.c.snowflake == snowflake)
         user = await self.database.fetch_one(query)
         return await self._make_user(user) if user else None
 
@@ -341,7 +336,14 @@ app.include_router(
     prefix="/auth",
     tags=["auth"],
 )
+# We do not need custom attributes for updating users;
+# User inherits from CreateUpdateDictModel (which defines update logic)
+#
+# In fact, the only route fast_users.router lets you modify directly is "validate_password"
 app.include_router(fast_users.get_users_router(), prefix="/users", tags=["users"])
+
+
+find_user = APIRouter()
 
 
 @app.on_event("startup")
