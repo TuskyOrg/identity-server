@@ -13,8 +13,9 @@ services:
       MODULE_NAME: server
       VARIABLE_NAME: app
     volumes:
-    # So changes made during development are automatically reflected in the container
-    - ".:/app"
+      # Sync changes made during development are automatically reflected in the container
+      - ".:/app"
+      - "backend-log:${LOG_DIR-/var/tusky/}"
     depends_on:
       - "db"
     command: "/start-reload.sh"
@@ -33,5 +34,7 @@ services:
 
 volumes:
   db-data:
+  backend-log:
+
 
 
