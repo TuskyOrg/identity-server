@@ -1,6 +1,6 @@
 #! /usr/bin/env bash
 # How tests are set up:
-#   This file "test.sh" deletes the old docker-volumes & builds new containers using docker compose.
+#   This file "tests.sh" deletes the old docker-volumes & builds new containers using docker compose.
 #   The "backend" container runs "_tests_start.sh", which in turn calls "_tests_start.py" (which creates the tables) & pytest
 
 # Exit in case of error
