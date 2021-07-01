@@ -1,14 +1,18 @@
 # https://frankie567.github.io/fastapi-users/configuration/full-example.html
 
+import logging
+import os
+import pathlib
 import secrets
+from typing import Optional, Dict, Any, Type, Union, Awaitable
+import warnings
 import unicodedata
-from typing import Optional, Dict, Any, Awaitable, Type, Union
 
 import databases
-import sqlalchemy
 from fastapi import FastAPI, Request
 from fastapi_users import (
     FastAPIUsers,
+    # Naming schema: All modules from fastapi_users are labeled as fast_<module_name>.
     authentication as fast_authentication,
     db as fast_db,
     password as fast_password,
@@ -16,10 +20,13 @@ from fastapi_users import (
     user as fast_user,
 )
 import fastapi_operation_id
-from pydantic import BaseModel, BaseSettings, PostgresDsn, validator
+from pydantic import BaseModel, BaseSettings, EmailStr, PostgresDsn, validator
 from snowflake import get_snowflake, Snowflake
-from sqlalchemy import Column, TEXT, BIGINT
-from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base
+from sqlalchemy import create_engine  # type: ignore
+from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base  # type: ignore
+from sqlalchemy.sql.expression import text  # type: ignore
+from sqlalchemy.sql.schema import Column  # type: ignore
+from sqlalchemy.types import TEXT, BIGINT  # type: ignore
 
 
 class Settings(BaseSettings):
@@ -29,7 +36,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
-    DATABASE_DSN: Optional[PostgresDsn] = None
+    DATABASE_DSN: Optional[PostgresDsn]
 
     @validator("DATABASE_DSN", pre=True)
     def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:
@@ -43,11 +50,40 @@ class Settings(BaseSettings):
             path=f"/{values.get('POSTGRES_DB') or ''}",
         )
 
+    FIRST_SUPERUSER_USERNAME: str
+    FIRST_SUPERUSER_EMAIL: EmailStr
+    FIRST_SUPERUSER_PASSWORD: str
+
+    LOG_DIR: pathlib.PosixPath
+    LOG_FILE_NAME: str
+    LOG_FILE_PATH: Optional[str] = None
+
+    @validator("LOG_FILE_PATH", pre=True)
+    def assemble_log_file_path(cls, v: Optional[str], values):
+        return os.path.join(values.get("LOG_DIR"), values.get("LOG_FILE_NAME"))
+
     class Config:
         case_sensitive = True
 
 
 settings = Settings()
+
+
+# Logic to log to a file
+handler_level = logging.INFO
+logger_level = logging.INFO
+
+handler: logging.Handler
+try:
+    handler = logging.FileHandler(settings.LOG_FILE_PATH)  # type: ignore
+except FileNotFoundError:
+    warnings.warn("Log file not found; using NullHandler")
+    handler = logging.NullHandler()
+handler.setLevel(handler_level)
+
+logger = logging.getLogger("sqlalchemy")
+logger.addHandler(handler)
+logger.setLevel(logger_level)
 
 
 def to_id(text):
@@ -61,7 +97,7 @@ def to_id(text):
     #   The normal form KD (NFKD) will apply the compatibility decomposition,
     #   i.e. replace all compatibility characters with their equivalents.
     normalized_text: str = unicodedata.normalize("NFKD", text).lower()
-    banned_symbols = ["$", "@", "!", "admin"]
+    banned_symbols = ["$", "@", "!"]
     if any(s in normalized_text for s in banned_symbols):
         raise
     if len(normalized_text) < 3:
@@ -120,37 +156,75 @@ class UserUpdate(User, fast_models.BaseUserUpdate):
 
 class UserInDB(User, fast_models.BaseUserDB):
     username: str
+    username_id: str
+    snowflake: Snowflake
 
 
-database = databases.Database(settings.DATABASE_DSN)
+database = databases.Database(settings.DATABASE_DSN)  # type: ignore
 Base: DeclarativeMeta = declarative_base()
 
 
 class UserTable(Base, fast_db.SQLAlchemyBaseUserTable):
+    __tablename__ = "users"
+
     snowflake = Column(BIGINT, nullable=False, unique=True, index=True)
     username = Column(TEXT, nullable=False)
     username_id = Column(TEXT, unique=True, nullable=False, index=True)
 
 
-engine = sqlalchemy.create_engine(settings.DATABASE_DSN, echo=True)
+engine = create_engine(settings.DATABASE_DSN, echo=False)
 
 
-def initdb() -> None:
+def initdb():
     Base.metadata.create_all(engine)
-    # Todo: Check if superuser exists; if not, create it
+
+    # I had difficulty working with the 'databases' library, so I just wrote the sql by hand
+
+    # Check if superuser (admin) account exists.
+    with engine.connect() as conn:
+        select_statement = text("SELECT username FROM users WHERE username_id = :name;")
+        result = conn.execute(
+            select_statement, {"name": to_id(settings.FIRST_SUPERUSER_USERNAME)}
+        )
+        user_exists: int = result.rowcount
+    if user_exists:
+        return
+
+    # If it doesn't, create it
+    import asyncio
+    import uuid
+
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(get_snowflake())
+    #
+    id_ = uuid.uuid4()
+    snowflake = loop.run_until_complete(task)
+    username_id = to_id(settings.FIRST_SUPERUSER_USERNAME)
+    hashed_password = fast_password.get_password_hash(settings.FIRST_SUPERUSER_PASSWORD)
+    user_model = {
+        "id": id_,
+        "username": settings.FIRST_SUPERUSER_USERNAME,
+        "username_id": username_id,
+        "snowflake": snowflake,
+        "email": settings.FIRST_SUPERUSER_EMAIL,
+        "hashed_password": hashed_password,
+        "is_active": True,
+        "is_verified": True,
+        "is_superuser": True,
+    }
+    insert_statement = UserTable.__table__.insert().values(**user_model)
+    with engine.begin() as conn:
+        conn.execute(insert_statement)
 
 
 def dropdb() -> None:
     Base.metadata.drop_all(engine)
 
 
-users = UserTable.__table__
-
-
 class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
     # Add a methods to get users by snowflake and username
 
-    async def create(self, user: fast_models.UD) -> fast_models.UD:
+    async def create(self, user: UserInDB) -> UserInDB:
         user.snowflake = await get_snowflake()
         return await super(TuskyUserDatabase, self).create(user)
 
@@ -166,7 +240,9 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
         return await self._make_user(user) if user else None
 
 
-user_db = TuskyUserDatabase(user_db_model=UserInDB, database=database, users=users)
+user_db = TuskyUserDatabase(
+    user_db_model=UserInDB, database=database, users=UserTable.__table__
+)
 
 
 def on_after_register(user: UserInDB, request: Request):
@@ -203,6 +279,8 @@ fast_users = FastAPIUsers(
     user_update_model=UserUpdate,
     user_db_model=UserInDB,
 )
+
+
 # The object has methods that return routes.
 # These methods are a thin wrapper around functions in the fastapi_users library.
 # For example, fast_users.get_auth_router internally calls fastapi_users.router.get_auth_router
@@ -210,29 +288,22 @@ fast_users = FastAPIUsers(
 # fast_users.get_auth_router has fewer arguments than fastapi_users.router.get_auth_router
 # Instead of the method having more parameters, it passes object attributes to the function.
 # Thus, to edit the behavior of the router, we assign specific object attributes to our implementation
-
-# TODO: mypy is angry about typing but I don't see what's wrong
-
-
 def get_create_user(
-    user_db: fast_db.base.BaseUserDatabase[fast_models.BaseUserDB],
-    user_db_model: Type[fast_models.BaseUserDB],
+    user_db: TuskyUserDatabase,
+    user_db_model: Type[UserInDB],
 ) -> fast_user.CreateUserProtocol:
-    # The implementation is matched fairly one to one from fast_user.get_create_user
     async def create_user(
-        user: UserCreate,
+        user: fast_models.BaseUserCreate,
         safe: bool = True,
         is_active: bool = None,
         is_verified: bool = None,
     ) -> fast_models.BaseUserDB:
-        # Verify user doesn't already exist
-        existing_email = await user_db.get_by_email(user.email)
-        if existing_email is not None:
-            raise fast_user.UserAlreadyExists()
-        existing_username = await user_db.get_by_username(user.username)
-        if existing_username is not None:
-            raise fast_user.UserAlreadyExists()
+        # See fast_user.get_create_user for default implementation
 
+        # We make the assumption that an integrity error means the user already exists
+        # This could lead to bugs down the road if an integrity error occurs for a different reason,
+        # but it saves us from hitting the database 2 additional times
+        # to check if the email or username is already registered.
         hashed_password = fast_password.get_password_hash(user.password)
         user_dict = (
             user.create_update_dict() if safe else user.create_update_dict_superuser()
