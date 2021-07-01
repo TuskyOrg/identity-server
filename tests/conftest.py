@@ -41,7 +41,6 @@ def superuser_token_headers(client: TestClient) -> Dict[str, str]:
     return get_user_authentication_headers(
         client=client,
         username=settings.FIRST_SUPERUSER_USERNAME,
-        email=settings.FIRST_SUPERUSER_EMAIL,
         password=settings.FIRST_SUPERUSER_PASSWORD,
     )
 
