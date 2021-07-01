@@ -3,6 +3,7 @@ name = "users2"
 version = "0.1.0"
 description = ""
 authors = ["Snapper <LearningWithSnapper@gmail.com>"]
+license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
