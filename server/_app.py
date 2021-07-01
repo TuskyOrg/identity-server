@@ -13,7 +13,7 @@ from fastapi_users import (
     db as fast_db,
     password as fast_password,
     models as fast_models,
-    user as fast_user
+    user as fast_user,
 )
 import fastapi_operation_id
 from pydantic import BaseModel, BaseSettings, PostgresDsn, validator
@@ -51,7 +51,7 @@ settings = Settings()
 
 
 def to_id(text):
-    """ Normalizes utf-8 strings using normalization form KD and lowercase characters """
+    """Normalizes utf-8 strings using normalization form KD and lowercase characters"""
     # https://unicode.org/reports/tr15/
     #   For each character, there are two normal forms: normal form C and normal form D.
     #   Normal form D (NFD) is also known as canonical decomposition,
@@ -70,7 +70,8 @@ def to_id(text):
 
 
 class CreateUpdateDictModel(BaseModel):
-    """ Custom implementation of fast_models.CreateUpdateDictModel """
+    """Custom implementation of fast_models.CreateUpdateDictModel"""
+
     # fast_models.BaseUser inherits from fast_models.CreateUpdateDictModel.
     # We want our User to inherit from fast_models.BaseUser
     # but with custom behavior these two methods.
@@ -88,7 +89,7 @@ class CreateUpdateDictModel(BaseModel):
                 "is_active",
                 "is_verified",
                 "oauth_accounts",
-                "snowflake"
+                "snowflake",
             },
         )
         if d["username"]:
@@ -109,8 +110,7 @@ class User(CreateUpdateDictModel, fast_models.BaseUser):
     username_id: Optional[str]
 
 
-
-class UserCreate(CreateUpdateDictModel, fast_models.BaseUserCreate, ):
+class UserCreate(CreateUpdateDictModel, fast_models.BaseUserCreate):
     username: str
 
 
@@ -166,9 +166,7 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
         return await self._make_user(user) if user else None
 
 
-user_db = TuskyUserDatabase(
-    user_db_model=UserInDB, database=database, users=users
-)
+user_db = TuskyUserDatabase(user_db_model=UserInDB, database=database, users=users)
 
 
 def on_after_register(user: UserInDB, request: Request):

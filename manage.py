@@ -33,10 +33,9 @@ def resetdb():
     server.initdb()
 
 
-
 cli.add_command(initdb)
 cli.add_command(dropdb)
 cli.add_command(resetdb)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()
