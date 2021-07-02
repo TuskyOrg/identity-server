@@ -1,4 +1,7 @@
 import logging
+from unittest.mock import patch
+
+import tusky_snowflake
 
 # tenacity is a library to retry code until it succeeds
 from tenacity import after_log, before_log, retry, stop_after_attempt, wait_fixed
@@ -18,12 +21,16 @@ wait_seconds = 1
     before=before_log(logger, logging.INFO),
     after=after_log(logger, logging.WARN),
 )
+@patch(
+    "server._app.synchronous_get_snowflake",
+    tusky_snowflake.mock.new_snowflake_service().synchronous_get_snowflake,
+)
 def wait_for_database_to_be_setup() -> None:
     try:
         initdb()
         return
     except Exception as e:
-        logger.error(e.with_traceback())
+        logger.error(e)
         raise e
 
 

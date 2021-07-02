@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "users2"
-version = "0.1.0"
+name = "users_service"
+version = "0.1.1"
 description = ""
 authors = ["Snapper <LearningWithSnapper@gmail.com>"]
 license = "MIT"
@@ -15,7 +15,7 @@ databases = {extras = ["postgres"], version = "^0.4.3"}
 asyncpg = "^0.23.0"
 psycopg2 = "^2.9.1"
 click = "^8.0.1"
-snowflake = {git = "https://github.com/TuskyOrg/snowflake-python-client.git"}
+tusky-snowflake = {git = "https://github.com/TuskyOrg/snowflake-python-client.git"}
 PyJWT = "^2.1.0"
 
 [tool.poetry.dev-dependencies]

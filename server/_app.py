@@ -24,7 +24,7 @@ from fastapi_users import (
 import fastapi_operation_id
 import jwt
 from pydantic import BaseModel, BaseSettings, EmailStr, PostgresDsn, validator
-from snowflake import get_snowflake, Snowflake
+from tusky_snowflake import get_snowflake, synchronous_get_snowflake, Snowflake
 from sqlalchemy import create_engine  # type: ignore
 from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base  # type: ignore
 from sqlalchemy.sql.expression import text  # type: ignore
@@ -199,12 +199,7 @@ def initdb():
         return
 
     # If it doesn't, create it
-    import asyncio
-
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(get_snowflake())
-    #
-    id_ = loop.run_until_complete(task)
+    id_ = synchronous_get_snowflake()
     username_id = to_id(settings.FIRST_SUPERUSER_USERNAME)
     hashed_password = fast_password.get_password_hash(settings.FIRST_SUPERUSER_PASSWORD)
     user_model = {
