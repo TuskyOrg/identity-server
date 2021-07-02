@@ -143,7 +143,6 @@ class CreateUpdateDictModel(BaseModel):
 class User(CreateUpdateDictModel, fast_models.BaseUser):
     id: Optional[Snowflake]
     username: Optional[str]
-    username_id: Optional[str]
 
 
 class UserCreate(CreateUpdateDictModel, fast_models.BaseUserCreate):
