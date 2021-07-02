@@ -154,7 +154,12 @@ class UserUpdate(User, fast_models.BaseUserUpdate):
 
 
 class UserInDB(User, fast_models.BaseUserDB):
-    id: Snowflake
+    # Todo: I know my typing is incorrect but it doesn't seem worth it to figure out a fix
+    # The function "create_user" has the line "db_user = user_db_model(...".
+    # This requires that the Pydantic object be already created
+    # However, the Snowflake is only fetched when inserting into the database.
+    # We lie to the type checker by saying id (Snowflake) is an optional field,
+    # despite it being required by the database.
     username: str
     username_id: str
 
