@@ -9,7 +9,8 @@ import warnings
 import unicodedata
 
 import databases
-from fastapi import FastAPI, APIRouter, Request
+from fastapi import FastAPI, APIRouter, Request, Response
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
     FastAPIUsers,
     # Naming schema: All modules from fastapi_users are labeled as fast_<module_name>.
@@ -17,9 +18,11 @@ from fastapi_users import (
     db as fast_db,
     password as fast_password,
     models as fast_models,
+    utils as fast_utils,
     user as fast_user,
 )
 import fastapi_operation_id
+import jwt
 from pydantic import BaseModel, BaseSettings, EmailStr, PostgresDsn, validator
 from snowflake import get_snowflake, Snowflake
 from sqlalchemy import create_engine  # type: ignore
@@ -160,6 +163,7 @@ class UserInDB(User, fast_models.BaseUserDB):
     # However, the Snowflake is only fetched when inserting into the database.
     # We lie to the type checker by saying id (Snowflake) is an optional field,
     # despite it being required by the database.
+    id: Optional[Snowflake]
     username: str
     username_id: str
 
@@ -229,14 +233,44 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
         user.id = await get_snowflake()
         return await super(TuskyUserDatabase, self).create(user)
 
-    # This method is unused as of 2021/07/01.
-    # However, the functionality is solid and it complements
-    # fast_db.SQLAlchemyUserDatabase.get_by_email, so this dead code is left alone.
-    async def get_by_username(self, username: str):
+    async def get_by_username(self, username: str) -> UserInDB:
         username_id = to_id(username)
         query = self.users.select().where(self.users.c.username_id == username_id)
         user = await self.database.fetch_one(query)
         return await self._make_user(user) if user else None
+
+    # We redefine the behavior to accept a username OR email as authentication
+    async def authenticate(
+        self, credentials: OAuth2PasswordRequestForm
+    ) -> Optional[UserInDB]:
+        """
+        Authenticate and return a user following a username or email and a password.
+
+        Will automatically upgrade password hash if necessary.
+        """
+        # https://github.com/frankie567/fastapi-users/blob/728c160b50112b6cd522ecddbe409b3d08ea7805/fastapi_users/db/base.py#L46
+        if "@" in credentials.username:
+            user = await self.get_by_email(credentials.username)
+        else:
+            user = await self.get_by_username(credentials.username)
+
+        if user is None:
+            # Run the hasher to mitigate timing attack
+            # Inspired from Django: https://code.djangoproject.com/ticket/20760
+            fast_password.get_password_hash(credentials.password)
+            return None
+
+        verified, updated_password_hash = fast_password.verify_and_update_password(
+            credentials.password, user.hashed_password
+        )
+        if not verified:
+            return None
+        # Update password hash to a more robust one if needed
+        if updated_password_hash is not None:
+            user.hashed_password = updated_password_hash
+            await self.update(user)
+
+        return user
 
 
 user_db = TuskyUserDatabase(
@@ -250,15 +284,55 @@ def on_after_register(user: UserInDB, request: Request):
     print(user.dict())
 
 
-def on_after_forgot_password(user: UserInDB, token: str, request: Request):
-    print(f"User {user.id} has forgot their password. Reset token: {token}")
+# def on_after_forgot_password(user: UserInDB, token: str, request: Request):
+#     print(f"User {user.id} has forgot their password. Reset token: {token}")
 
 
 def after_verification_request(user: UserInDB, token: str, request: Request):
     print(f"Verification requested for user {user.id}. Verification token: {token}")
 
 
-jwt_authentication = fast_authentication.JWTAuthentication(
+class JWTAuthentication(fast_authentication.JWTAuthentication):
+
+    # Using Snowflakes instead of UUID's forces us to redefine __call__
+    # https://github.com/frankie567/fastapi-users/blob/728c160b50112b6cd522ecddbe409b3d08ea7805/fastapi_users/authentication/jwt.py#L41
+    async def __call__(
+        self,
+        credentials: Optional[str],
+        user_db: TuskyUserDatabase,
+    ) -> Optional[UserInDB]:
+        if credentials is None:
+            return None
+
+        try:
+            data = jwt.decode(
+                credentials,
+                self.secret,
+                audience=self.token_audience,
+                algorithms=[fast_utils.JWT_ALGORITHM],
+            )
+            user_id = data.get("user_id")
+            if user_id is None:
+                return None
+        except jwt.PyJWTError:
+            return None
+
+        try:
+            # These two lines are the entire reason we have to subclass this
+            # user_uiid = UUID4(user_id)
+            # return await user_db.get(user_uiid)
+            return user_db.get(user_id)
+        except ValueError:
+            return None
+
+    # TODO: LOGOUT ENDPOINT
+    logout = False
+
+    async def get_logout_response(self, user: UserInDB, response: Response):
+        raise NotImplementedError
+
+
+jwt_authentication = JWTAuthentication(
     secret=settings.SECRET_KEY, lifetime_seconds=3600, tokenUrl="auth/jwt/login"
 )
 
@@ -326,17 +400,21 @@ app.include_router(
 app.include_router(
     fast_users.get_auth_router(jwt_authentication), prefix="/auth/jwt", tags=["auth"]
 )
+# Todo: Add reset password logic
+# app.include_router(
+#     fast_users.get_reset_password_router(
+#         settings.SECRET_KEY, after_forgot_password=on_after_forgot_password
+#     ),
+#     prefix="/auth",
+#     tags=["auth"],
+# )
+verify_router = fast_users.get_verify_router(settings.SECRET_KEY)
+# Todo: Set up email verification (and rename router); in the meantime, the email verification route is removed
+verify_router.routes = [
+    r for r in verify_router.routes if r.name != "request_verify_token"
+]
 app.include_router(
-    fast_users.get_reset_password_router(
-        settings.SECRET_KEY, after_forgot_password=on_after_forgot_password
-    ),
-    prefix="/auth",
-    tags=["auth"],
-)
-app.include_router(
-    fast_users.get_verify_router(
-        settings.SECRET_KEY, after_verification_request=after_verification_request
-    ),
+    verify_router,
     prefix="/auth",
     tags=["auth"],
 )
@@ -344,7 +422,14 @@ app.include_router(
 # User inherits from CreateUpdateDictModel (which defines update logic)
 #
 # In fact, the only route fast_users.router lets you modify directly is "validate_password"
-app.include_router(fast_users.get_users_router(), prefix="/users", tags=["users"])
+users_router = fast_users.get_users_router()
+# However, we don't want any superuser routes
+users_router.routes = [
+    r
+    for r in users_router.routes
+    if r.name not in ("delete_user", "update_user", "get_user")
+]
+app.include_router(users_router, prefix="/users", tags=["users"])
 
 
 find_user = APIRouter()
