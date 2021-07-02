@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "users_service"
+name = "tusky_identity_service"
 version = "0.1.1"
 description = ""
 authors = ["Snapper <LearningWithSnapper@gmail.com>"]
