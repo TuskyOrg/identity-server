@@ -3,8 +3,7 @@
 import logging
 import os
 import pathlib
-import secrets
-from typing import Optional, Dict, Any, Type, Literal
+from typing import Optional, Dict, Any, Type, Literal, List, Union
 import warnings
 import unicodedata
 
@@ -21,7 +20,6 @@ from fastapi_users import (
     utils as fast_utils,
     user as fast_user,
 )
-import fastapi_operation_id
 import jwt
 from pydantic import (
     BaseModel,
@@ -39,7 +37,8 @@ from sqlalchemy.types import TEXT, BIGINT  # type: ignore
 
 
 class Settings(BaseSettings):
-    SECRET_KEY = secrets.token_urlsafe(32)
+    # TODO: PRODUCTION KEY
+    SECRET_KEY = "abcdefghijklmnop"  # secrets.token_urlsafe(32)
 
     POSTGRES_SERVER: str
     POSTGRES_USER: str
@@ -70,6 +69,8 @@ class Settings(BaseSettings):
     @validator("LOG_FILE_PATH", pre=True)
     def assemble_log_file_path(cls, v: Optional[str], values):
         return os.path.join(values.get("LOG_DIR"), values.get("LOG_FILE_NAME"))
+
+    TOKEN_AUDIENCE: Union[List[str], str]
 
     class Config:
         case_sensitive = True
@@ -299,7 +300,8 @@ class BearerToken(BaseModel):
 
 
 class JWTAuthentication(fast_authentication.JWTAuthentication):
-    token_audience = "tusky_users:auth"
+    # token_audience = settings.TOKEN_AUDIENCE
+    # JWT_ALGORITHM = "HS256" # This is not easily re-definable; its defined in fast_utils.JWT_ALGORITHM
 
     # Using Snowflakes instead of UUID's forces us to redefine __call__
     # https://github.com/frankie567/fastapi-users/blob/728c160b50112b6cd522ecddbe409b3d08ea7805/fastapi_users/authentication/jwt.py#L41
@@ -340,7 +342,8 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
 
     async def _generate_token(self, user: UserInDB) -> str:
         # We use "sub" instead of "user_id"
-        data = {"sub": str(user.id), "aud": self.token_audience}
+        # Todo: "aud"
+        data = {"sub": str(user.id)}
         return fast_utils.generate_jwt(
             data, self.secret, self.lifetime_seconds, fast_utils.JWT_ALGORITHM
         )
@@ -356,7 +359,7 @@ jwt_authentication = JWTAuthentication(
     secret=settings.SECRET_KEY, lifetime_seconds=3600, tokenUrl="auth/jwt/login"
 )
 
-app = FastAPI()
+app = FastAPI(title="Identity Service")
 # Some notes on fastapi_users:
 #   fastapi_users is smart. By default, a "safe" mode is enabled that does not allow
 #   clients accessing the api set is_superuser or is_active, etc
@@ -432,16 +435,12 @@ app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])
 #     prefix="/auth",
 #     tags=["auth"],
 # )
-verify_router = fast_users.get_verify_router(settings.SECRET_KEY)
 # Todo: Set up email verification (and rename router); in the meantime, the email verification route is removed
-verify_router.routes = [
-    r for r in verify_router.routes if r.name != "request_verify_token"
-]
-app.include_router(
-    verify_router,
-    prefix="/auth",
-    tags=["auth"],
-)
+# app.include_router(
+#     fast_users.get_verify_router(settings.SECRET_KEY),
+#     prefix="/auth",
+#     tags=["auth"],
+# )
 # We do not need custom attributes for updating users;
 # User inherits from CreateUpdateDictModel (which defines update logic)
 #
@@ -468,5 +467,3 @@ async def startup():
 async def shutdown():
     await database.disconnect()
 
-
-fastapi_operation_id.clean_ids(app)
