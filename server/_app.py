@@ -4,7 +4,7 @@ import logging
 import os
 import pathlib
 import secrets
-from typing import Optional, Dict, Any, Type
+from typing import Optional, Dict, Any, Type, Literal
 import warnings
 import unicodedata
 
@@ -23,7 +23,13 @@ from fastapi_users import (
 )
 import fastapi_operation_id
 import jwt
-from pydantic import BaseModel, BaseSettings, EmailStr, PostgresDsn, validator
+from pydantic import (
+    BaseModel,
+    BaseSettings,
+    EmailStr,
+    PostgresDsn,
+    validator,
+)
 from tusky_snowflake import get_snowflake, synchronous_get_snowflake, Snowflake
 from sqlalchemy import create_engine  # type: ignore
 from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base  # type: ignore
@@ -287,7 +293,13 @@ def after_verification_request(user: UserInDB, token: str, request: Request):
     print(f"Verification requested for user {user.id}. Verification token: {token}")
 
 
+class BearerToken(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"]
+
+
 class JWTAuthentication(fast_authentication.JWTAuthentication):
+    token_audience = "tusky_users:auth"
 
     # Using Snowflakes instead of UUID's forces us to redefine __call__
     # https://github.com/frankie567/fastapi-users/blob/728c160b50112b6cd522ecddbe409b3d08ea7805/fastapi_users/authentication/jwt.py#L41
@@ -319,6 +331,19 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
             return user_db.get(user_id)
         except ValueError:
             return None
+
+    async def get_login_response(
+        self, user: UserInDB, response: Response
+    ) -> BearerToken:
+        token = await self._generate_token(user)
+        return BearerToken(access_token=token, token_type="bearer")
+
+    async def _generate_token(self, user: UserInDB) -> str:
+        # We use "sub" instead of "user_id"
+        data = {"sub": str(user.id), "aud": self.token_audience}
+        return fast_utils.generate_jwt(
+            data, self.secret, self.lifetime_seconds, fast_utils.JWT_ALGORITHM
+        )
 
     # TODO: LOGOUT ENDPOINT
     logout = False
@@ -392,9 +417,13 @@ fast_users.create_user = get_create_user(user_db, UserInDB)
 app.include_router(
     fast_users.get_register_router(on_after_register), prefix="/auth", tags=["auth"]
 )
-app.include_router(
-    fast_users.get_auth_router(jwt_authentication), prefix="/auth/jwt", tags=["auth"]
+auth_router = fast_users.get_auth_router(
+    jwt_authentication,
 )
+for r in auth_router.routes:
+    if r.name == "login":
+        r.response_model = BearerToken
+app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])
 # Todo: Add reset password logic
 # app.include_router(
 #     fast_users.get_reset_password_router(
