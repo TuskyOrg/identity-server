@@ -7,8 +7,6 @@ import dotenv
 # Todo: Figure out automatically if POSTGRES_SERVER is "db" or "localhost" so the
 #  eventual runserver command works inside a docker container
 dotenv.load_dotenv("dev.env")
-os.environ.pop("POSTGRES_SERVER")
-os.environ.setdefault("POSTGRES_SERVER", "localhost")
 import server
 
 

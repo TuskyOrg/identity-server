@@ -20,7 +20,9 @@ services:
       - "db"
     command: "/start-reload.sh"
     ports:
-      - "8000:80"
+      - "8007:80"
+    links:
+      - db
 
   db:
     image: postgres:13
@@ -28,13 +30,9 @@ services:
     - db-data:/var/lib/postgresql/data/
     env_file:
       - dev.env
-    ports:
-      - "5432:5432"
+
 
 
 volumes:
   db-data:
   backend-log:
-
-
-
