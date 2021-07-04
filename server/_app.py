@@ -33,7 +33,7 @@ from sqlalchemy import create_engine  # type: ignore
 from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base  # type: ignore
 from sqlalchemy.sql.expression import text  # type: ignore
 from sqlalchemy.sql.schema import Column  # type: ignore
-from sqlalchemy.types import TEXT, BIGINT  # type: ignore
+from sqlalchemy.types import TEXT, BIGINT, String # type: ignore
 
 
 class Settings(BaseSettings):
@@ -157,6 +157,7 @@ class User(CreateUpdateDictModel, fast_models.BaseUser):
 
 class UserCreate(CreateUpdateDictModel, fast_models.BaseUserCreate):
     username: str
+    email: Optional[EmailStr]
 
 
 class UserUpdate(User, fast_models.BaseUserUpdate):
@@ -171,6 +172,7 @@ class UserInDB(User, fast_models.BaseUserDB):
     # We lie to the type checker by saying id (Snowflake) is an optional field,
     # despite it being required by the database.
     id: Optional[Snowflake]
+    email: Optional[EmailStr]
     username: str
     username_id: str
 
@@ -183,6 +185,7 @@ class UserTable(Base, fast_db.SQLAlchemyBaseUserTable):
     __tablename__ = "users"
 
     id = Column(BIGINT, primary_key=True, index=True, nullable=True, default=None)
+    email = Column(String(length=320), unique=True, index=False, nullable=True)
     username = Column(TEXT, nullable=False)
     username_id = Column(TEXT, unique=True, nullable=False, index=True)
 
