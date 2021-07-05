@@ -38,6 +38,8 @@ from sqlalchemy.types import TEXT, BIGINT, String  # type: ignore
 
 
 class Settings(BaseSettings):
+    IS_PRODUCTION: bool = False
+
     # TODO: PRODUCTION KEY
     SECRET_KEY = "abcdefghijklmnop"  # secrets.token_urlsafe(32)
 
@@ -288,8 +290,8 @@ user_db = TuskyUserDatabase(
 
 def on_after_register(user: UserInDB, request: Request):
     # print(f"User {user.id} has registered.")
-    print(user)
-    print(user.dict())
+    print("Registerd user: ", user)
+
 
 
 # def on_after_forgot_password(user: UserInDB, token: str, request: Request):
@@ -415,6 +417,7 @@ def get_create_user(
             user = await user_db.create(db_user)
         except UniqueViolationError:
             raise
+        return user
 
     return create_user
 

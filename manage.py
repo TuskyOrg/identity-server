@@ -1,4 +1,5 @@
 import os
+import sys
 
 import click
 import dotenv
@@ -7,6 +8,7 @@ import dotenv
 # Todo: Figure out automatically if POSTGRES_SERVER is "db" or "localhost" so the
 #  eventual runserver command works inside a docker container
 dotenv.load_dotenv("dev.env")
+# Checks are added to dropdb make sure the server isn't in production
 import server
 
 
@@ -34,6 +36,7 @@ def resetdb():
 cli.add_command(initdb)
 cli.add_command(dropdb)
 cli.add_command(resetdb)
+
 
 if __name__ == "__main__":
     cli()

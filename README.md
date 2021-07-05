@@ -1,13 +1,14 @@
 # Tusky Identity service
-## For developers
+## Client Libraries
+  - [Python](https://github.com/TuskyOrg/identity-python-client)
+
+## Get started
 ### Start Service
 ```
 docker compose up --build
 ```
 ### Run tests
-```
-bash tests.sh
-```
+See `integration_tests.py`
 ### Manage database
 Enter the container running the service `backend`;
 if you need to, get the names of running containers using `docker ps`

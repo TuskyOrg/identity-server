@@ -4,14 +4,16 @@ version: "3.3"
 
 services:
   backend:
-    build:
-      context: .
-      dockerfile: server.Dockerfile
     env_file:
       - "dev.env"
     environment:
       MODULE_NAME: server
       VARIABLE_NAME: app
+    build:
+      context: .
+      dockerfile: server.Dockerfile
+      args:
+        IS_PRODUCTION: "${IS_PRODUCTION-false}"
     volumes:
       # Sync changes made during development are automatically reflected in the container
       - ".:/app"
