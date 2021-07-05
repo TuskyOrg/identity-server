@@ -3,12 +3,13 @@
 import logging
 import os
 import pathlib
-from typing import Optional, Dict, Any, Type, Literal, List, Union
+from typing import Optional, Dict, Any, Type, Literal
 import warnings
 import unicodedata
 
 import databases
-from fastapi import FastAPI, APIRouter, Request, Response
+from asyncpg.exceptions import UniqueViolationError
+from fastapi import FastAPI, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
     FastAPIUsers,
@@ -33,7 +34,7 @@ from sqlalchemy import create_engine  # type: ignore
 from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base  # type: ignore
 from sqlalchemy.sql.expression import text  # type: ignore
 from sqlalchemy.sql.schema import Column  # type: ignore
-from sqlalchemy.types import TEXT, BIGINT, String # type: ignore
+from sqlalchemy.types import TEXT, BIGINT, String  # type: ignore
 
 
 class Settings(BaseSettings):
@@ -70,7 +71,7 @@ class Settings(BaseSettings):
     def assemble_log_file_path(cls, v: Optional[str], values):
         return os.path.join(values.get("LOG_DIR"), values.get("LOG_FILE_NAME"))
 
-    TOKEN_AUDIENCE: Union[List[str], str]
+    TOKEN_AUDIENCE_AUTH: str = "tusky-identity-service:auth"
 
     class Config:
         case_sensitive = True
@@ -110,7 +111,7 @@ def to_id(text):
     banned_symbols = ["$", "@", "!"]
     if any(s in normalized_text for s in banned_symbols):
         raise
-    if len(normalized_text) < 3:
+    if len(normalized_text) < 2:
         raise
     return normalized_text
 
@@ -239,8 +240,8 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
         return await super(TuskyUserDatabase, self).create(user)
 
     async def get_by_username(self, username: str) -> UserInDB:
-        username_id = to_id(username)
-        query = self.users.select().where(self.users.c.username_id == username_id)
+        username_as_id = to_id(username)
+        query = self.users.select().where(self.users.c.username_id == username_as_id)
         user = await self.database.fetch_one(query)
         return await self._make_user(user) if user else None
 
@@ -258,6 +259,8 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
             user = await self.get_by_email(credentials.username)
         else:
             user = await self.get_by_username(credentials.username)
+
+        print(user, "\n" * 4)
 
         if user is None:
             # Run the hasher to mitigate timing attack
@@ -303,10 +306,12 @@ class BearerToken(BaseModel):
 
 
 class JWTAuthentication(fast_authentication.JWTAuthentication):
-    # token_audience = settings.TOKEN_AUDIENCE
-    # JWT_ALGORITHM = "HS256" # This is not easily re-definable; its defined in fast_utils.JWT_ALGORITHM
+    token_audience = settings.TOKEN_AUDIENCE_AUTH
+    # JWT_ALGORITHM = "HS256" # its defined in fast_utils.JWT_ALGORITHM
 
-    # Using Snowflakes instead of UUID's forces us to redefine __call__
+    # Details that force us to redefine __call__:
+    #       We use Snowflakes instead of UUID's
+    #       We use the field "sub" instead of "user_id"
     # https://github.com/frankie567/fastapi-users/blob/728c160b50112b6cd522ecddbe409b3d08ea7805/fastapi_users/authentication/jwt.py#L41
     async def __call__(
         self,
@@ -323,17 +328,17 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
                 audience=self.token_audience,
                 algorithms=[fast_utils.JWT_ALGORITHM],
             )
-            user_id = data.get("user_id")
+            user_id = data.get("sub")
             if user_id is None:
                 return None
-        except jwt.PyJWTError:
+        except jwt.PyJWTError as err:
+            # Todo: Actually log errors
+            print(err)
             return None
 
         try:
-            # These two lines are the entire reason we have to subclass this
-            # user_uiid = UUID4(user_id)
-            # return await user_db.get(user_uiid)
-            return user_db.get(user_id)
+            user_id = int(user_id)
+            return await user_db.get(user_id)
         except ValueError:
             return None
 
@@ -346,7 +351,7 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
     async def _generate_token(self, user: UserInDB) -> str:
         # We use "sub" instead of "user_id"
         # Todo: "aud"
-        data = {"sub": str(user.id)}
+        data = {"sub": str(user.id), "aud": settings.TOKEN_AUDIENCE_AUTH}
         return fast_utils.generate_jwt(
             data, self.secret, self.lifetime_seconds, fast_utils.JWT_ALGORITHM
         )
@@ -398,11 +403,6 @@ def get_create_user(
         is_verified: bool = None,
     ) -> fast_models.BaseUserDB:
         # See fast_user.get_create_user for default implementation
-
-        # We make the assumption that an integrity error means the user already exists
-        # This could lead to bugs down the road if an integrity error occurs for a different reason,
-        # but it saves us from hitting the database 2 additional times
-        # to check if the email or username is already registered.
         hashed_password = fast_password.get_password_hash(user.password)
         user_dict = (
             user.create_update_dict() if safe else user.create_update_dict_superuser()
@@ -411,7 +411,10 @@ def get_create_user(
             **user_dict,
             hashed_password=hashed_password,
         )
-        return await user_db.create(db_user)
+        try:
+            user = await user_db.create(db_user)
+        except UniqueViolationError:
+            raise
 
     return create_user
 
@@ -423,9 +426,7 @@ fast_users.create_user = get_create_user(user_db, UserInDB)
 app.include_router(
     fast_users.get_register_router(on_after_register), prefix="/auth", tags=["auth"]
 )
-auth_router = fast_users.get_auth_router(
-    jwt_authentication,
-)
+auth_router = fast_users.get_auth_router(jwt_authentication)
 for r in auth_router.routes:
     if r.name == "login":
         r.response_model = BearerToken
@@ -444,21 +445,19 @@ app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])
 #     prefix="/auth",
 #     tags=["auth"],
 # )
-# We do not need custom attributes for updating users;
-# User inherits from CreateUpdateDictModel (which defines update logic)
+# We do not need custom routes for updating users (In fact, the only route fast_users.router lets you modify directly is "validate_password");
+# However, there fast_users has attributes set that modify the default behavior
 #
-# In fact, the only route fast_users.router lets you modify directly is "validate_password"
+# User inherits from CreateUpdateDictModel (which defines update logic)
+# The dependency "current_active_user" is modified using the jwt_authentication backend;
 users_router = fast_users.get_users_router()
-# However, we don't want any superuser routes
+# We don't want any superuser routes
 users_router.routes = [
     r
     for r in users_router.routes
     if r.name not in ("delete_user", "update_user", "get_user")
 ]
 app.include_router(users_router, prefix="/users", tags=["users"])
-
-
-find_user = APIRouter()
 
 
 @app.on_event("startup")
@@ -469,4 +468,3 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     await database.disconnect()
-
