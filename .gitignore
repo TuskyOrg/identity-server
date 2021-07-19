@@ -67,6 +67,7 @@ dmypy.json
 ### Project Specific Ignores ###
 # IDE files
 .idea
+workspace*
 
 *.log
 
