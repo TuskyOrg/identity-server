@@ -9,7 +9,8 @@ import unicodedata
 
 import databases
 from asyncpg.exceptions import UniqueViolationError
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, status
+from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
@@ -429,7 +430,7 @@ def get_create_user(
         try:
             user = await user_db.create(db_user)
         except UniqueViolationError:
-            raise
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate user")
         return user
 
     return create_user
