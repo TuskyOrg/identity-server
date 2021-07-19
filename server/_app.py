@@ -10,6 +10,7 @@ import unicodedata
 import databases
 from asyncpg.exceptions import UniqueViolationError
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
     FastAPIUsers,
@@ -370,6 +371,18 @@ jwt_authentication = JWTAuthentication(
 )
 
 app = FastAPI(title="Identity Service")
+
+origins = [
+    "http://tusky.org",
+    "http://localhost:5000"
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Some notes on fastapi_users:
 #   fastapi_users is smart. By default, a "safe" mode is enabled that does not allow
 #   clients accessing the api set is_superuser or is_active, etc
