@@ -2,7 +2,7 @@
 # To run tests:
 #   Start server (docker compose up --build) and snowflake server (https://github.com/TuskyOrg/snowflake-server)
 #   Reset database
-#   python integration_tests.py
+#   python test_integration.py
 
 import tusky_users
 
