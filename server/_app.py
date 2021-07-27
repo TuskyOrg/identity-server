@@ -11,8 +11,9 @@ import unicodedata
 import databases
 from asyncpg.exceptions import UniqueViolationError
 from databases import Database
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, status
 from fastapi.exceptions import HTTPException
+from fastapi.responses import Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
@@ -218,6 +219,11 @@ class RefreshParameters(BaseModel):
     refresh_token: str
     # A URL-encoded space-delimited list of requested scope permissions
     scope: Optional[str]
+
+
+class RevokeParameters(BaseModel):
+    client_id: str
+    token: str
 
 
 class RefreshResponse(BaseModel):
@@ -503,10 +509,7 @@ jwt_authentication = JWTAuthentication(
 
 app = FastAPI(title="Identity Service")
 
-origins = [
-    "http://tusky.org",
-    "http://localhost:5000"
-]
+origins = ["http://tusky.org", "http://localhost:5000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -559,7 +562,9 @@ def get_create_user(
         try:
             user = await user_db.create(db_user)
         except UniqueViolationError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate user")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate user"
+            )
         return user
 
     return create_user
@@ -578,22 +583,34 @@ for r in auth_router.routes:
         r.response_model = LoginResponse
 
 
-# Todo: to stay true to the fastapi_users framework, the "proper" way to write this
-#  would be to set fast_users.get_auth_router to include our implementation
-# Todo: Add ip_address
-@auth_router.post("/refresh")
-async def refresh(response: Response, obj_in: RefreshParameters):
-    token = await crud_refresh_token.get_by_token(obj_in.refresh_token)
+async def _handle_token(refresh_token: str, client_id: str):
+    token = await crud_refresh_token.get_by_token(refresh_token)
     if (token is None) or token.is_revoked:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid refresh token",
         )
-    if token.user_id != int(obj_in.client_id):
+    if token.user_id != int(client_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Invalid refresh token"
         )
+    return token
+
+
+# Todo: to stay true to the fastapi_users framework, the "proper" way to write this
+#  would be to set fast_users.get_auth_router to include our implementation
+# Todo: Add ip_address
+@auth_router.post("/refresh", response_model=RefreshResponse)
+async def refresh(response: Response, obj_in: RefreshParameters):
+    token = await _handle_token(obj_in.refresh_token, obj_in.client_id)
     return await jwt_authentication.get_refresh_response(token, response)
+
+
+@auth_router.post("/revoke")
+async def revoke(obj_in: RevokeParameters):
+    token = await _handle_token(obj_in.token, obj_in.client_id)
+    await crud_refresh_token.revoke(token)
+    return JSONResponse(status_code=status.HTTP_204_NO_CONTENT)
 
 
 app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])
