@@ -586,7 +586,7 @@ resolved_reference = "c64b9e34135a9fbdff9b745da762da8dd77f607c"
 
 [[package]]
 name = "tusky-users"
-version = "0.0.6"
+version = "0.0.7"
 description = ""
 category = "dev"
 optional = false
@@ -605,7 +605,7 @@ typing = ["pydantic[email] (>=1.8.2,<2.0.0)", "tusky-snowflake @ git+https://git
 type = "git"
 url = "https://github.com/TuskyOrg/identity-python-client.git"
 reference = "master"
-resolved_reference = "c306530fcd371417919eca2489f020ea577fedeb"
+resolved_reference = "02c31d1c24814b75f5b9079de6f85284e2d31079"
 
 [[package]]
 name = "typing-extensions"
