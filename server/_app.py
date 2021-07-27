@@ -1,14 +1,16 @@
 # https://frankie567.github.io/fastapi-users/configuration/full-example.html
-
+import datetime
 import logging
 import os
 import pathlib
+import secrets
 from typing import Optional, Dict, Any, Type, Literal
 import warnings
 import unicodedata
 
 import databases
 from asyncpg.exceptions import UniqueViolationError
+from databases import Database
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,19 +26,14 @@ from fastapi_users import (
     user as fast_user,
 )
 import jwt
-from pydantic import (
-    BaseModel,
-    BaseSettings,
-    EmailStr,
-    PostgresDsn,
-    validator,
-)
+from pydantic import BaseModel, BaseSettings, EmailStr, PostgresDsn, validator, Field
 from tusky_snowflake import get_snowflake, synchronous_get_snowflake, Snowflake
 from sqlalchemy import create_engine  # type: ignore
 from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base  # type: ignore
-from sqlalchemy.sql.expression import text  # type: ignore
-from sqlalchemy.sql.schema import Column  # type: ignore
-from sqlalchemy.types import TEXT, BIGINT, String  # type: ignore
+from sqlalchemy.sql import func  # type: ignore
+from sqlalchemy.sql.expression import text, desc  # type: ignore
+from sqlalchemy.sql.schema import Column, ForeignKey, Table  # type: ignore
+from sqlalchemy.types import TEXT, BIGINT, String, BOOLEAN, TIMESTAMP  # type: ignore
 
 
 class Settings(BaseSettings):
@@ -76,6 +73,9 @@ class Settings(BaseSettings):
         return os.path.join(values.get("LOG_DIR"), values.get("LOG_FILE_NAME"))
 
     TOKEN_AUDIENCE_AUTH: str = "tusky-identity-service:auth"
+
+    REFRESH_SECRET: str = "ponmlkjihgfedcba"
+    REFRESH_LIFETIME_SECONDS: int = 1209600  # 2 Weeks
 
     class Config:
         case_sensitive = True
@@ -155,21 +155,27 @@ class CreateUpdateDictModel(BaseModel):
         return d
 
 
-class User(CreateUpdateDictModel, fast_models.BaseUser):
+# Todo: it would be nice to keep a consistent style, but this class isn't actually used
+# class RefreshTokenCreateUpdateDictModel(BaseModel):
+#     def create_update_dict(self): return self.dict(exclude_unset=True, include={"revoked"})
+#     create_update_dict_superuser = create_update_dict()
+
+
+class UserModel(CreateUpdateDictModel, fast_models.BaseUser):
     id: Optional[Snowflake]
     username: Optional[str]
 
 
-class UserCreate(CreateUpdateDictModel, fast_models.BaseUserCreate):
+class UserModelCreate(CreateUpdateDictModel, fast_models.BaseUserCreate):
     username: str
     email: Optional[EmailStr]
 
 
-class UserUpdate(User, fast_models.BaseUserUpdate):
+class UserModelUpdate(UserModel, fast_models.BaseUserUpdate):
     pass
 
 
-class UserInDB(User, fast_models.BaseUserDB):
+class UserModelInDB(UserModel, fast_models.BaseUserDB):
     # Todo: I know my typing is incorrect but it doesn't seem worth it to figure out a fix
     # The function "create_user" has the line "db_user = user_db_model(...".
     # This requires that the Pydantic object be already created
@@ -182,7 +188,44 @@ class UserInDB(User, fast_models.BaseUserDB):
     username_id: str
 
 
-database = databases.Database(settings.DATABASE_DSN)  # type: ignore
+class RefreshTokenModel(BaseModel):
+    id: Optional[Snowflake]
+    user_id: Snowflake
+    token: str
+    is_revoked: bool = False
+    creation_timestamp: Optional[datetime.datetime]
+
+
+class RefreshTokenModelInDB(RefreshTokenModel):
+    id: Snowflake
+    creation_timestamp = datetime.datetime
+
+    class Config:
+        orm_mode = True
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"]
+
+
+class RefreshParameters(BaseModel):
+    # https://auth0.com/docs/api/authentication?http#refresh-token
+    grant_type: Literal["refresh_token"]
+    client_id: str = Field(..., description="The user's id (Snowflake) as a string")
+    # client_secret: str
+    refresh_token: str
+    # A URL-encoded space-delimited list of requested scope permissions
+    scope: Optional[str]
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"]
+
+
+db = databases.Database(settings.DATABASE_DSN)  # type: ignore
 Base: DeclarativeMeta = declarative_base()
 
 
@@ -193,6 +236,16 @@ class UserTable(Base, fast_db.SQLAlchemyBaseUserTable):
     email = Column(String(length=320), unique=True, index=False, nullable=True)
     username = Column(TEXT, nullable=False)
     username_id = Column(TEXT, unique=True, nullable=False, index=True)
+
+
+class RefreshTokenTable(Base):
+    __tablename__ = "refresh_tokens"
+    id = Column(BIGINT, primary_key=True, index=True, nullable=True, default=None)
+    user_id = Column(BIGINT, ForeignKey("users.id"), index=True, nullable=False)
+    # Todo: logic ensuring ACTIVE refresh_tokens unique (not ALL refresh_tokens unique)
+    token = Column(TEXT, nullable=False, unique=True)
+    is_revoked = Column(BOOLEAN, default=False)
+    creation_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
 
 
 engine = create_engine(settings.DATABASE_DSN, echo=False)
@@ -236,14 +289,14 @@ def dropdb() -> None:
     Base.metadata.drop_all(engine)
 
 
-class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
+class CRUDUser(fast_db.SQLAlchemyUserDatabase):
     # Add a methods to get users by snowflake and username
 
-    async def create(self, user: UserInDB) -> UserInDB:
+    async def create(self, user: UserModelInDB) -> UserModelInDB:
         user.id = await get_snowflake()
-        return await super(TuskyUserDatabase, self).create(user)
+        return await super(CRUDUser, self).create(user)
 
-    async def get_by_username(self, username: str) -> UserInDB:
+    async def get_by_username(self, username: str) -> UserModelInDB:
         username_as_id = to_id(username)
         query = self.users.select().where(self.users.c.username_id == username_as_id)
         user = await self.database.fetch_one(query)
@@ -252,7 +305,7 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
     # We redefine the behavior to accept a username OR email as authentication
     async def authenticate(
         self, credentials: OAuth2PasswordRequestForm
-    ) -> Optional[UserInDB]:
+    ) -> Optional[UserModelInDB]:
         """
         Authenticate and return a user following a username or email and a password.
 
@@ -263,9 +316,7 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
             user = await self.get_by_email(credentials.username)
         else:
             user = await self.get_by_username(credentials.username)
-
-        print(user, "\n" * 4)
-
+        # https://github.com/frankie567/fastapi-users/blob/728c160b50112b6cd522ecddbe409b3d08ea7805/fastapi_users/db/base.py#L46
         if user is None:
             # Run the hasher to mitigate timing attack
             # Inspired from Django: https://code.djangoproject.com/ticket/20760
@@ -285,33 +336,74 @@ class TuskyUserDatabase(fast_db.SQLAlchemyUserDatabase):
         return user
 
 
-user_db = TuskyUserDatabase(
-    user_db_model=UserInDB, database=database, users=UserTable.__table__
+class CRUDRefreshToken:
+    # Todo: typing generic BaseModel
+    def __init__(
+        self, token_db_model: Type[BaseModel], database: Database, tokens: Table
+    ):
+        self.token_db_model = token_db_model
+        self.database = database
+        self.tokens = tokens
+
+    async def get_by_token(self, token: str) -> Optional[RefreshTokenModelInDB]:
+        query = (
+            self.tokens.select()
+            .where(self.tokens.c.token == token)
+            .order_by(desc(self.tokens.c.creation_timestamp))
+        )
+        token_data = await self.database.fetch_one(query)
+        return self.token_db_model(**token_data) if token_data else None
+
+    # Todo: typing: this should be a refreshtokenmodel in db to fit the schema, but it doesn't work
+    async def create(self, token: RefreshTokenModelInDB) -> RefreshTokenModelInDB:
+        token.id = await get_snowflake()
+        token_data = token.dict()
+        query = self.tokens.insert()
+        await self.database.execute(query, token_data)
+        return token
+
+    async def revoke(self, token: RefreshTokenModelInDB):
+        query = (
+            self.tokens.update()
+            .where(self.tokens.c.token == token.token)
+            .values(is_revoked=True)
+        )
+        await self.database.execute(query, {"token": token.token})
+
+
+crud_user = CRUDUser(
+    user_db_model=UserModelInDB, database=db, users=UserTable.__table__
+)
+crud_refresh_token = CRUDRefreshToken(
+    token_db_model=RefreshTokenModelInDB,
+    database=db,
+    tokens=RefreshTokenTable.__table__,
 )
 
 
-def on_after_register(user: UserInDB, request: Request):
+def on_after_register(user: UserModelInDB, request: Request):
     # print(f"User {user.id} has registered.")
     print("Registerd user: ", user)
-
 
 
 # def on_after_forgot_password(user: UserInDB, token: str, request: Request):
 #     print(f"User {user.id} has forgot their password. Reset token: {token}")
 
 
-def after_verification_request(user: UserInDB, token: str, request: Request):
+def after_verification_request(user: UserModelInDB, token: str, request: Request):
     print(f"Verification requested for user {user.id}. Verification token: {token}")
-
-
-class BearerToken(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"]
 
 
 class JWTAuthentication(fast_authentication.JWTAuthentication):
     token_audience = settings.TOKEN_AUDIENCE_AUTH
     # JWT_ALGORITHM = "HS256" # its defined in fast_utils.JWT_ALGORITHM
+
+    # todo: To remain consistent with fast_authentication.JWTAuthentication,
+    #  these attributes should be set in __init__
+    #  Additionally, "secret" should be aliased to "user_secret".
+    #  Maybe these should be all caps?
+    refresh_secret: str
+    refresh_lifetime_seconds: str
 
     # Details that force us to redefine __call__:
     #       We use Snowflakes instead of UUID's
@@ -320,8 +412,8 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
     async def __call__(
         self,
         credentials: Optional[str],
-        user_db: TuskyUserDatabase,
-    ) -> Optional[UserInDB]:
+        user_db: CRUDUser,
+    ) -> Optional[UserModelInDB]:
         if credentials is None:
             return None
 
@@ -347,23 +439,61 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
             return None
 
     async def get_login_response(
-        self, user: UserInDB, response: Response
-    ) -> BearerToken:
-        token = await self._generate_token(user)
-        return BearerToken(access_token=token, token_type="bearer")
+        self, user: UserModelInDB, response: Response
+    ) -> LoginResponse:
+        # THIS FUNCTION WRITES TO THE REFRESH TOKEN TABLE
+        # Todo: Separation of concerns: this should not be writing to the database,
+        #  at least without the name indicating as such).
+        #  It's hard to refactor without breaking get_auth_router,
+        #  but get_login_response should take a CRUDRefreshToken as an argument
+        #  (like __init__ takes a CRUDUser as an argument)
+        user_id = str(user.id)
+        access_token = self._generate_access_token(user_id)
+        refresh_token = self._generate_refresh_token(user_id)
+        token_model = RefreshTokenModel(user_id=user.id, token=refresh_token)
+        await crud_refresh_token.create(token_model)
+        return LoginResponse(
+            access_token=access_token, refresh_token=refresh_token, token_type="bearer"
+        )
 
-    async def _generate_token(self, user: UserInDB) -> str:
+    async def get_refresh_response(
+        self, token_data: RefreshTokenModelInDB, response: Response
+    ) -> RefreshResponse:
+        # This method's odd signature mimics the signature of the base class's
+        # get_*_response methods
+        access_token = self._generate_access_token(str(token_data.user_id))
+        return RefreshResponse(access_token=access_token, token_type="bearer")
+
+    def __generate_token(
+        self, user_id: str, secret, lifetime_seconds, extras: Dict = None
+    ) -> str:
         # We use "sub" instead of "user_id"
         # Todo: "aud"
-        data = {"sub": str(user.id), "aud": settings.TOKEN_AUDIENCE_AUTH}
+        data = {"sub": user_id, "aud": settings.TOKEN_AUDIENCE_AUTH}
+        if extras:
+            data.update(extras)
         return fast_utils.generate_jwt(
-            data, self.secret, self.lifetime_seconds, fast_utils.JWT_ALGORITHM
+            data, secret, lifetime_seconds, fast_utils.JWT_ALGORITHM
+        )
+
+    def _generate_access_token(self, user_id: str) -> str:
+        return self.__generate_token(user_id, self.secret, self.lifetime_seconds)
+
+    # Adding the refresh_secret and refresh_lifetime seconds to JWTAuthentication itself
+    # just to mimic the library is silly; instead, we have them defined in settings
+    def _generate_refresh_token(self, user_id: str) -> str:
+        extras = {"rand": secrets.randbits(64)}
+        return self.__generate_token(
+            user_id,
+            settings.REFRESH_SECRET,
+            settings.REFRESH_LIFETIME_SECONDS,
+            extras=extras,
         )
 
     # TODO: LOGOUT ENDPOINT
     logout = False
 
-    async def get_logout_response(self, user: UserInDB, response: Response):
+    async def get_logout_response(self, user: UserModelInDB, response: Response):
         raise NotImplementedError
 
 
@@ -392,12 +522,12 @@ app.add_middleware(
 # We start by creating a FastAPIUsers object
 # Note fast_user is fastapi_users.user, while fast_users is the FastAPIUsers object
 fast_users = FastAPIUsers(
-    db=user_db,
+    db=crud_user,
     auth_backends=[jwt_authentication],
-    user_model=User,
-    user_create_model=UserCreate,
-    user_update_model=UserUpdate,
-    user_db_model=UserInDB,
+    user_model=UserModel,
+    user_create_model=UserModelCreate,
+    user_update_model=UserModelUpdate,
+    user_db_model=UserModelInDB,
 )
 
 
@@ -409,8 +539,8 @@ fast_users = FastAPIUsers(
 # Instead of the method having more parameters, it passes object attributes to the function.
 # Thus, to edit the behavior of the router, we assign specific object attributes to our implementation
 def get_create_user(
-    user_db: TuskyUserDatabase,
-    user_db_model: Type[UserInDB],
+    user_db: CRUDUser,
+    user_db_model: Type[UserModelInDB],
 ) -> fast_user.CreateUserProtocol:
     async def create_user(
         user: fast_models.BaseUserCreate,
@@ -420,9 +550,8 @@ def get_create_user(
     ) -> fast_models.BaseUserDB:
         # See fast_user.get_create_user for default implementation
         hashed_password = fast_password.get_password_hash(user.password)
-        user_dict = (
-            user.create_update_dict() if safe else user.create_update_dict_superuser()
-        )
+        user_dict = user.create_update_dict_superuser()
+        # user_dict = user.create_update_dict() if safe else user.create_update_dict_superuser()
         db_user = user_db_model(
             **user_dict,
             hashed_password=hashed_password,
@@ -436,7 +565,7 @@ def get_create_user(
     return create_user
 
 
-fast_users.create_user = get_create_user(user_db, UserInDB)
+fast_users.create_user = get_create_user(crud_user, UserModelInDB)
 
 # Now that we've set fast_users's "create_user" attribute,
 # the method "get_register_router" will use our custom implementation
@@ -446,7 +575,27 @@ app.include_router(
 auth_router = fast_users.get_auth_router(jwt_authentication)
 for r in auth_router.routes:
     if r.name == "login":
-        r.response_model = BearerToken
+        r.response_model = LoginResponse
+
+
+# Todo: to stay true to the fastapi_users framework, the "proper" way to write this
+#  would be to set fast_users.get_auth_router to include our implementation
+# Todo: Add ip_address
+@auth_router.post("/refresh")
+async def refresh(response: Response, obj_in: RefreshParameters):
+    token = await crud_refresh_token.get_by_token(obj_in.refresh_token)
+    if (token is None) or token.is_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid refresh token",
+        )
+    if token.user_id != int(obj_in.client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Invalid refresh token"
+        )
+    return await jwt_authentication.get_refresh_response(token, response)
+
+
 app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])
 # Todo: Add reset password logic
 # app.include_router(
@@ -479,9 +628,10 @@ app.include_router(users_router, prefix="/users", tags=["users"])
 
 @app.on_event("startup")
 async def startup():
-    await database.connect()
+    await db.connect()
+    initdb()
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    await database.disconnect()
+    await db.disconnect()
