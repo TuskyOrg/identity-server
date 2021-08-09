@@ -82,17 +82,29 @@ def test_everything():
         c.get_me(refresh_response2.access_token)
 
         ################################################################################
-        # Assert old token can't be used
-        try:
-            c.get_me(refresh_response1.access_token)
-            RuntimeError("Oh no! An old refresh token was able to be used")
-        except HTTPStatusError:
-            pass
+        # TODO: Assert access token can't hit endpoints requiring a new token
+        # try:
+        #     c.get_me(refresh_response1.access_token)
+        #     raise RuntimeError("Oh no! An old access token was able to be used")
+        # except HTTPStatusError:
+        #     pass
         # Assert new token is still fine
         c.get_me(refresh_response2.access_token)
+        # Assert old refresh token cannot be refreshed
+        try:
+            c.refresh(u3.id, u3_new_token.access_token)
+            raise RuntimeError("Oh no! An old refresh token was able to be used")
+        except HTTPStatusError:
+            pass
 
         ################################################################################
-        # Todo: Assert revoking token
+        # Assert revoking token
+        # c.revoke(u3.id, u3_new_token.refresh_token)
+        # try:
+        #     c.refresh(u3.id, u3_new_token.refresh_token)
+        #     raise RuntimeError("Oh no! A revoked token was able to be used")
+        # except HTTPStatusError:
+        #     pass
 
         print(
             "Passed all the current tests. Remember, there isn't a log out button yet. "
