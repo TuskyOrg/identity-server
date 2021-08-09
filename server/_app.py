@@ -610,7 +610,7 @@ async def refresh(response: Response, obj_in: RefreshParameters):
 async def revoke(obj_in: RevokeParameters):
     token = await _handle_token(obj_in.token, obj_in.client_id)
     await crud_refresh_token.revoke(token)
-    return JSONResponse(status_code=status.HTTP_204_NO_CONTENT)
+    return JSONResponse({}, status_code=status.HTTP_200_OK)
 
 
 app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])

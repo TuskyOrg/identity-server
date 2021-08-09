@@ -98,13 +98,13 @@ def test_everything():
             pass
 
         ################################################################################
-        # Assert revoking token
-        # c.revoke(u3.id, u3_new_token.refresh_token)
-        # try:
-        #     c.refresh(u3.id, u3_new_token.refresh_token)
-        #     raise RuntimeError("Oh no! A revoked token was able to be used")
-        # except HTTPStatusError:
-        #     pass
+        # Assert revoking refresh token
+        c.revoke(u3.id, u3_new_token.refresh_token)
+        try:
+            c.refresh(u3.id, u3_new_token.refresh_token)
+            raise RuntimeError("Oh no! A revoked token was able to be used")
+        except HTTPStatusError:
+            pass
 
         print(
             "Passed all the current tests. Remember, there isn't a log out button yet. "
