@@ -16,6 +16,7 @@ psycopg2 = "^2.9.1"
 click = "^8.0.1"
 tusky-snowflake = {git = "https://github.com/TuskyOrg/snowflake-python-client.git"}
 PyJWT = "^2.1.0"
+tusky-users = {git = "https://github.com/TuskyOrg/identity-python-client.git"}
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.4"

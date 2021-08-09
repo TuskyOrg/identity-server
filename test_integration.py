@@ -4,7 +4,7 @@
 #   Reset database
 #   python test_integration.py
 
-import client
+import tusky_users
 
 from httpx import HTTPStatusError
 

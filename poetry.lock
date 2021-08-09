@@ -584,6 +584,27 @@ reference = "master"
 resolved_reference = "c64b9e34135a9fbdff9b745da762da8dd77f607c"
 
 [[package]]
+name = "tusky-users"
+version = "0.0.8"
+description = ""
+category = "main"
+optional = false
+python-versions = "^3.6.2"
+develop = false
+
+[package.dependencies]
+httpx = "^0.18.2"
+
+[package.extras]
+typing = ["pydantic[email] (>=1.8.2,<2.0.0)", "tusky-snowflake @ git+https://github.com/TuskyOrg/snowflake-python-client.git@master"]
+
+[package.source]
+type = "git"
+url = "https://github.com/TuskyOrg/identity-python-client.git"
+reference = "master"
+resolved_reference = "b704fbb607624c37b707cdcc46f0076c20647d1c"
+
+[[package]]
 name = "typing-extensions"
 version = "3.10.0.0"
 description = "Backported and Experimental Type Hints for Python 3.5+"
@@ -615,7 +636,7 @@ python-versions = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.8"
-content-hash = "0d2d46f02aecdceb194b6d4062324b052437c4a362b409c1c4d5148d4988f66b"
+content-hash = "3abd577409e35d0223e526fcc0ac5bf134ff063528130bff736bfb13311e61c5"
 
 [metadata.files]
 anyio = [
@@ -939,6 +960,7 @@ toml = [
     {file = "toml-0.10.2.tar.gz", hash = "sha256:b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f"},
 ]
 tusky-snowflake = []
+tusky-users = []
 typing-extensions = [
     {file = "typing_extensions-3.10.0.0-py2-none-any.whl", hash = "sha256:0ac0f89795dd19de6b97debb0c6af1c70987fd80a2d62d1958f7e56fcc31b497"},
     {file = "typing_extensions-3.10.0.0-py3-none-any.whl", hash = "sha256:779383f6086d90c99ae41cf0ff39aac8a7937a9283ce0a414e5dd782f4c94a84"},
