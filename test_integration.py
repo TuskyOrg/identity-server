@@ -16,7 +16,14 @@ def test_everything():
         U1_NAME = "u1"
         U1_EMAIL = "u1@tusky.org"
         U1_PASS = "fake_pass"
-        u1 = c.register(username=U1_NAME, email=U1_EMAIL, password=U1_PASS)
+        try:
+            u1 = c.register(username=U1_NAME, email=U1_EMAIL, password=U1_PASS)
+        except HTTPStatusError as e:
+            raise Exception(
+                "\n\tDid you remember to reset the database?\n"
+                "\tThis test is badly designed and will fail if the database "
+                "is not reset. See the README"
+            ) from e
         token_from_name = c.login(U1_NAME, U1_PASS)
         u1_me_by_name = c.get_me(token_from_name.access_token)
         token_from_email = c.login(U1_EMAIL, U1_PASS)
