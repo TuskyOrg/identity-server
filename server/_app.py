@@ -23,7 +23,7 @@ from fastapi_users import (
     db as fast_db,
     password as fast_password,
     models as fast_models,
-    utils as fast_utils,
+    jwt as fast_jwt,
     user as fast_user,
 )
 import jwt
@@ -155,6 +155,9 @@ class CreateUpdateDictModel(BaseModel):
             d["username_id"] = to_id(d["username"])
         return d
 
+    class Config:
+        exclude_unset = True
+
 
 # Todo: it would be nice to keep a consistent style, but this class isn't actually used
 # class RefreshTokenCreateUpdateDictModel(BaseModel):
@@ -165,6 +168,7 @@ class CreateUpdateDictModel(BaseModel):
 class UserModel(CreateUpdateDictModel, fast_models.BaseUser):
     id: Optional[Snowflake]
     username: Optional[str]
+    email: Optional[EmailStr]
 
 
 class UserModelCreate(CreateUpdateDictModel, fast_models.BaseUserCreate):
@@ -390,6 +394,7 @@ crud_refresh_token = CRUDRefreshToken(
 def on_after_register(user: UserModelInDB, request: Request):
     # print(f"User {user.id} has registered.")
     print("Registerd user: ", user)
+    print(type(user))
 
 
 # def on_after_forgot_password(user: UserInDB, token: str, request: Request):
@@ -402,7 +407,6 @@ def after_verification_request(user: UserModelInDB, token: str, request: Request
 
 class JWTAuthentication(fast_authentication.JWTAuthentication):
     token_audience = settings.TOKEN_AUDIENCE_AUTH
-    # JWT_ALGORITHM = "HS256" # its defined in fast_utils.JWT_ALGORITHM
 
     # todo: To remain consistent with fast_authentication.JWTAuthentication,
     #  these attributes should be set in __init__
@@ -427,8 +431,8 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
             data = jwt.decode(
                 credentials,
                 self.secret,
-                audience=self.token_audience,
-                algorithms=[fast_utils.JWT_ALGORITHM],
+                audience=settings.TOKEN_AUDIENCE_AUTH,
+                algorithms=[fast_jwt.JWT_ALGORITHM],
             )
             user_id = data.get("sub")
             if user_id is None:
@@ -478,8 +482,8 @@ class JWTAuthentication(fast_authentication.JWTAuthentication):
         data = {"sub": user_id, "aud": settings.TOKEN_AUDIENCE_AUTH}
         if extras:
             data.update(extras)
-        return fast_utils.generate_jwt(
-            data, secret, lifetime_seconds, fast_utils.JWT_ALGORITHM
+        return fast_jwt.generate_jwt(
+            data, secret, lifetime_seconds, fast_jwt.JWT_ALGORITHM
         )
 
     def _generate_access_token(self, user_id: str) -> str:

@@ -8,15 +8,15 @@ license = "GPL v3"
 [tool.poetry.dependencies]
 python = "^3.8"
 fastapi = "^0.65.2"
-fastapi-users = "^6.1.0"
+fastapi-users = {extras = ["sqlalchemy"], version = "^7.0.0"}
 pydantic = {extras = ["dotenv"], version = "^1.8.2"}
-databases = {extras = ["postgres"], version = "^0.4.3"}
 asyncpg = "^0.23.0"
 psycopg2 = "^2.9.1"
 click = "^8.0.1"
 tusky-snowflake = {git = "https://github.com/TuskyOrg/snowflake-python-client.git"}
 PyJWT = "^2.1.0"
 tusky-users = {git = "https://github.com/TuskyOrg/identity-python-client.git"}
+databases = "^0.5.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.4"
